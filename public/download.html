@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Download shared files using your share code. Fast, secure, and free.">
+  <title>FileShare — Download Files</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📁</text></svg>">
+</head>
+<body>
+  <!-- Background Effects -->
+  <div class="bg-effects">
+    <div class="bg-orb bg-orb--1"></div>
+    <div class="bg-orb bg-orb--2"></div>
+    <div class="bg-orb bg-orb--3"></div>
+  </div>
+  <div class="bg-grid"></div>
+
+  <!-- Navigation -->
+  <nav class="navbar" id="navbar">
+    <a href="/" class="navbar__brand">
+      <div class="navbar__logo">📁</div>
+      <div class="navbar__name">File<span>Share</span></div>
+    </a>
+    <div class="navbar__links">
+      <a href="/" class="navbar__link" id="nav-upload">
+        ⬆️ Upload
+      </a>
+      <a href="/download.html" class="navbar__link navbar__link--active" id="nav-download">
+        ⬇️ Download
+      </a>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main">
+    <div class="container">
+
+      <!-- Hero Section -->
+      <section class="hero">
+        <div class="hero__badge">
+          <span class="hero__badge-dot"></span>
+          Enter Share Code
+        </div>
+        <h1 class="hero__title">
+          Download <br><span class="hero__title-gradient">shared files</span>
+        </h1>
+        <p class="hero__subtitle">
+          Enter the share code you received to access and download the shared files.
+        </p>
+      </section>
+
+      <!-- Lookup Section -->
+      <div class="download-lookup">
+        <div class="upload-card">
+          <div class="upload-card__header">
+            <div class="upload-card__icon">🔑</div>
+            <div class="upload-card__header-text">
+              <h2>Enter Share Code</h2>
+              <p>Paste the code shared with you to access the files</p>
+            </div>
+          </div>
+
+          <div style="padding: 24px;">
+            <form class="lookup-form" id="lookup-form">
+              <input 
+                type="text" 
+                class="input input--code" 
+                id="code-input"
+                placeholder="ENTER CODE"
+                maxlength="12"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              >
+              <button class="btn btn--primary" type="submit" id="btn-lookup">
+                🔍 Find Files
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Download Section (shown after finding files) -->
+      <div class="download-section" id="download-section">
+        <div class="upload-card">
+          <div style="padding: 24px;">
+            <div class="download-header">
+              <div class="download-header__info">
+                <h2 id="download-title">Shared Files</h2>
+                <p id="download-meta">— files • — total</p>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <div class="expiry-badge" id="expiry-badge">
+                  ⏳ <span id="expiry-text">Expires in —</span>
+                </div>
+                <button class="btn btn--success btn--sm" id="btn-download-all" type="button">
+                  📦 Download All (.zip)
+                </button>
+              </div>
+            </div>
+
+            <div class="download-files" id="download-files-list">
+              <!-- Files rendered by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Error State -->
+      <div id="error-state" style="display: none;">
+        <div class="upload-card">
+          <div class="state-message">
+            <span class="state-message__icon">😔</span>
+            <h3 class="state-message__title" id="error-title">Share Not Found</h3>
+            <p class="state-message__desc" id="error-desc">
+              The share code might be incorrect or the files may have expired.
+            </p>
+            <br>
+            <button class="btn btn--secondary" id="btn-try-again" type="button">
+              ← Try Another Code
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>🔒 Files are automatically deleted after 24 hours • No sign-up required</p>
+  </footer>
+
+  <script src="/js/download.js"></script>
+</body>
+</html>

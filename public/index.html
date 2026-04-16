@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Share files instantly with anyone. Upload multiple files, get a share code, and let others download them easily.">
+  <title>FileShare — Share Files Instantly</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📁</text></svg>">
+</head>
+<body>
+  <!-- Background Effects -->
+  <div class="bg-effects">
+    <div class="bg-orb bg-orb--1"></div>
+    <div class="bg-orb bg-orb--2"></div>
+    <div class="bg-orb bg-orb--3"></div>
+  </div>
+  <div class="bg-grid"></div>
+
+  <!-- Navigation -->
+  <nav class="navbar" id="navbar">
+    <a href="/" class="navbar__brand">
+      <div class="navbar__logo">📁</div>
+      <div class="navbar__name">File<span>Share</span></div>
+    </a>
+    <div class="navbar__links">
+      <a href="/" class="navbar__link navbar__link--active" id="nav-upload">
+        ⬆️ Upload
+      </a>
+      <a href="/download.html" class="navbar__link" id="nav-download">
+        ⬇️ Download
+      </a>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main">
+    <div class="container">
+      
+      <!-- Hero Section -->
+      <section class="hero">
+        <div class="hero__badge">
+          <span class="hero__badge-dot"></span>
+          Secure • Fast • Simple
+        </div>
+        <h1 class="hero__title">
+          Share files with <br><span class="hero__title-gradient">anyone, instantly</span>
+        </h1>
+        <p class="hero__subtitle">
+          Upload your files, get a unique share code, and let anyone 
+          download them — no sign-up required.
+        </p>
+      </section>
+
+      <!-- Upload Section (default view) -->
+      <div id="upload-section">
+        <div class="upload-card">
+          <div class="upload-card__header">
+            <div class="upload-card__icon">⬆️</div>
+            <div class="upload-card__header-text">
+              <h2>Upload Files</h2>
+              <p>Drag & drop or click to select — up to 50 files, 500MB total</p>
+            </div>
+          </div>
+
+          <!-- Drop Zone -->
+          <div class="dropzone" id="dropzone">
+            <span class="dropzone__icon">☁️</span>
+            <p class="dropzone__text">
+              Drag & drop files here, or <span>browse</span>
+            </p>
+            <p class="dropzone__hint">
+              Supports all file types • Max 500MB total
+            </p>
+            <input type="file" id="file-input" multiple hidden>
+          </div>
+
+          <!-- File List -->
+          <div class="file-list" id="file-list"></div>
+
+          <!-- Progress Bar -->
+          <div class="progress-wrapper" id="progress-wrapper">
+            <div class="progress-bar">
+              <div class="progress-bar__fill" id="progress-fill"></div>
+            </div>
+            <div class="progress-text">
+              <span id="progress-status">Uploading...</span>
+              <span id="progress-percent">0%</span>
+            </div>
+          </div>
+
+          <!-- Upload Footer -->
+          <div class="upload-card__footer" id="upload-footer" style="display: none;">
+            <div class="upload-stats">
+              <div class="upload-stats__item">
+                📎 <strong id="stats-count">0</strong> files
+              </div>
+              <div class="upload-stats__item">
+                💾 <strong id="stats-size">0 KB</strong>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn--danger btn--sm" id="btn-clear" type="button">
+                ✕ Clear All
+              </button>
+              <button class="btn btn--primary" id="btn-upload" type="button">
+                🚀 Share Files
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Share Result (shown after successful upload) -->
+      <div class="share-result" id="share-result">
+        <div class="share-result__card">
+          <div class="share-result__check">✅</div>
+          <h2 class="share-result__title">Files Shared Successfully!</h2>
+          <p class="share-result__desc">
+            Share the code or link below so others can download your files.
+          </p>
+
+          <div class="share-result__info">
+            <div class="share-result__info-item">
+              <strong id="result-file-count">0</strong>
+              <span>Files</span>
+            </div>
+            <div class="share-result__info-item">
+              <strong id="result-total-size">0</strong>
+              <span>Total Size</span>
+            </div>
+            <div class="share-result__info-item">
+              <strong>24h</strong>
+              <span>Expires In</span>
+            </div>
+          </div>
+
+          <div class="share-code">
+            <div class="share-code__label">Your Share Code</div>
+            <div class="share-code__value" id="share-code-value">—</div>
+          </div>
+
+          <div class="share-link">
+            <span class="share-link__url" id="share-link-url">—</span>
+            <button class="btn btn--secondary btn--sm share-link__copy" id="btn-copy-link" type="button">
+              📋 Copy
+            </button>
+          </div>
+
+          <div class="share-result__actions">
+            <button class="btn btn--primary" id="btn-copy-code" type="button">
+              📋 Copy Code
+            </button>
+            <button class="btn btn--secondary" id="btn-new-upload" type="button">
+              ➕ New Upload
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>🔒 Files are automatically deleted after 24 hours • No sign-up required</p>
+  </footer>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
