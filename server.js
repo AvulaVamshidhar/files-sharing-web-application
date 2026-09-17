@@ -1,236 +1,272 @@
 const express = require('express');
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const archiver = require('archiver');
+const { put, del, list } = require('@vercel/blob');
+const { handleUpload } = require('@vercel/blob/client');
+const { Readable } = require('stream');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ─── Storage Configuration ──────────────────────────────────────────────────────
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-
-// In-memory store for share sessions
-// Structure: { shareId: { id, files: [{originalName, storedName, size, mimetype}], createdAt, expiresAt } }
-const shareStore = new Map();
-
-// File expiration time (24 hours in milliseconds)
 const EXPIRATION_MS = 24 * 60 * 60 * 1000;
-
-// Max total upload size: 500MB
+const MAX_FILES = 50;
 const MAX_TOTAL_SIZE = 500 * 1024 * 1024;
 
-// ─── Multer Setup ────────────────────────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const shareId = req.shareId || uuidv4().split('-')[0].toUpperCase();
-    req.shareId = shareId;
+app.use(express.json({ limit: '2mb' }));
+app.use(express.static(__dirname + '/public'));
 
-    const shareDir = path.join(UPLOADS_DIR, shareId);
-    if (!fs.existsSync(shareDir)) {
-      fs.mkdirSync(shareDir, { recursive: true });
-    }
-    cb(null, shareDir);
-  },
-  filename: (req, file, cb) => {
-    // Preserve original filename but add uuid prefix to avoid conflicts
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e6);
-    const ext = path.extname(file.originalname);
-    const base = path.basename(file.originalname, ext);
-    const storedName = `${uniqueSuffix}_${base}${ext}`;
-    cb(null, storedName);
+// Vercel Blob client-upload token endpoint.
+// The browser uploads the actual file directly to Blob, so large files do
+// not pass through the Vercel Function's request-body limit.
+app.post('/api/upload', async (req, res) => {
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body,
+      request: req,
+      onBeforeGenerateToken: async (pathname, clientPayload, multipart) => {
+        return {
+          allowedContentTypes: ['*/*'],
+          maximumSizeInBytes: MAX_TOTAL_SIZE,
+          addRandomSuffix: false,
+          tokenPayload: clientPayload || '',
+        };
+      },
+    });
+
+    res.json(jsonResponse);
+  } catch (error) {
+    console.error('Blob upload token error:', error);
+    res.status(400).json({ error: error.message || 'Unable to prepare upload.' });
   }
 });
 
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: MAX_TOTAL_SIZE,
-    files: 50
-  }
-});
+// Save the share manifest as a small JSON Blob.
+// This replaces the old in-memory Map, so share information survives
+// serverless function invocations.
+app.post('/api/create-share', async (req, res) => {
+  try {
+    const { files } = req.body || {};
 
-// ─── Middleware ───────────────────────────────────────────────────────────────────
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.json());
-
-// ─── Cleanup expired shares ─────────────────────────────────────────────────────
-function cleanupExpiredShares() {
-  const now = Date.now();
-  for (const [shareId, session] of shareStore.entries()) {
-    if (now > session.expiresAt) {
-      // Remove files from disk
-      const shareDir = path.join(UPLOADS_DIR, shareId);
-      if (fs.existsSync(shareDir)) {
-        fs.rmSync(shareDir, { recursive: true, force: true });
-      }
-      shareStore.delete(shareId);
-      console.log(`🗑️  Cleaned up expired share: ${shareId}`);
-    }
-  }
-}
-
-// Run cleanup every 10 minutes
-setInterval(cleanupExpiredShares, 10 * 60 * 1000);
-
-// ─── API Routes ──────────────────────────────────────────────────────────────────
-
-// Upload files
-app.post('/api/upload', (req, res) => {
-  upload.array('files', 50)(req, res, (err) => {
-    if (err) {
-      if (err instanceof multer.MulterError) {
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          return res.status(413).json({ error: 'File too large. Maximum size is 500MB.' });
-        }
-        if (err.code === 'LIMIT_FILE_COUNT') {
-          return res.status(400).json({ error: 'Too many files. Maximum is 50 files.' });
-        }
-        return res.status(400).json({ error: `Upload error: ${err.message}` });
-      }
-      return res.status(500).json({ error: 'Upload failed. Please try again.' });
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ error: 'No uploaded files were provided.' });
     }
 
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No files were uploaded.' });
+    if (files.length > MAX_FILES) {
+      return res.status(400).json({ error: `Maximum is ${MAX_FILES} files.` });
     }
 
-    const shareId = req.shareId;
-    const files = req.files.map(f => ({
-      originalName: f.originalname,
-      storedName: f.filename,
-      size: f.size,
-      mimetype: f.mimetype
+    const cleanFiles = files.map((file) => ({
+      originalName: String(file.originalName || ''),
+      size: Number(file.size || 0),
+      mimetype: String(file.mimetype || 'application/octet-stream'),
+      url: String(file.url || ''),
+      downloadUrl: String(file.downloadUrl || file.url || ''),
+      pathname: String(file.pathname || ''),
     }));
 
-    const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+    const totalSize = cleanFiles.reduce((sum, file) => sum + file.size, 0);
 
+    if (cleanFiles.some((file) => !file.originalName || !file.url)) {
+      return res.status(400).json({ error: 'Invalid uploaded file information.' });
+    }
+
+    if (totalSize > MAX_TOTAL_SIZE) {
+      return res.status(400).json({ error: 'Total size exceeds 500MB limit.' });
+    }
+
+    const shareId = uuidv4().split('-')[0].toUpperCase();
     const session = {
       id: shareId,
-      files,
+      files: cleanFiles,
       totalSize,
-      fileCount: files.length,
+      fileCount: cleanFiles.length,
       createdAt: Date.now(),
-      expiresAt: Date.now() + EXPIRATION_MS
+      expiresAt: Date.now() + EXPIRATION_MS,
     };
 
-    shareStore.set(shareId, session);
+    const manifest = await put(
+      `shares/${shareId}.json`,
+      JSON.stringify(session),
+      {
+        access: 'public',
+        addRandomSuffix: false,
+        contentType: 'application/json',
+      }
+    );
 
     const shareUrl = `${req.protocol}://${req.get('host')}/download.html?code=${shareId}`;
-
-    console.log(`📦 New share created: ${shareId} (${files.length} files, ${formatBytes(totalSize)})`);
 
     res.json({
       success: true,
       shareId,
       shareUrl,
-      fileCount: files.length,
-      totalSize,
-      expiresIn: '24 hours'
+      fileCount: session.fileCount,
+      totalSize: session.totalSize,
+      expiresIn: '24 hours',
+      manifestUrl: manifest.url,
     });
-  });
+  } catch (error) {
+    console.error('Create share error:', error);
+    res.status(500).json({ error: error.message || 'Could not create share.' });
+  }
 });
 
-// Get share info
-app.get('/api/share/:shareId', (req, res) => {
-  const { shareId } = req.params;
-  const session = shareStore.get(shareId.toUpperCase());
+// Resolve a manifest by listing only the share prefix. This avoids needing
+// a database while keeping the share metadata persistent.
+async function findManifest(shareId) {
+  const normalized = String(shareId || '').trim().toUpperCase();
 
-  if (!session) {
-    return res.status(404).json({ error: 'Share not found or has expired.' });
+  if (!/^[A-F0-9]{8}$/.test(normalized)) return null;
+
+  const result = await list({ prefix: `shares/${normalized}.json`, limit: 1 });
+  if (!result.blobs || result.blobs.length === 0) return null;
+
+  const manifestBlob = result.blobs[0];
+  const response = await fetch(manifestBlob.url);
+
+  if (!response.ok) return null;
+
+  const session = await response.json();
+  return { session, manifestUrl: manifestBlob.url };
+}
+
+async function deleteExpiredSession(found) {
+  if (!found) return;
+  try {
+    await Promise.all([
+      ...found.session.files.map((file) => file.url ? del(file.url) : null),
+      del(found.manifestUrl),
+    ]);
+  } catch (error) {
+    console.error('Cleanup error:', error);
   }
+}
 
-  if (Date.now() > session.expiresAt) {
-    cleanupExpiredShares();
-    return res.status(410).json({ error: 'This share has expired.' });
+// Get share information
+app.get('/api/share/:shareId', async (req, res) => {
+  try {
+    const found = await findManifest(req.params.shareId);
+
+    if (!found) {
+      return res.status(404).json({ error: 'Share not found or has expired.' });
+    }
+
+    const { session } = found;
+
+    if (Date.now() > session.expiresAt) {
+      await deleteExpiredSession(found);
+      return res.status(410).json({ error: 'This share has expired.' });
+    }
+
+    res.json({
+      id: session.id,
+      files: session.files.map((file) => ({
+        name: file.originalName,
+        size: file.size,
+        type: file.mimetype,
+      })),
+      fileCount: session.fileCount,
+      totalSize: session.totalSize,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
+      timeRemaining: session.expiresAt - Date.now(),
+    });
+  } catch (error) {
+    console.error('Share lookup error:', error);
+    res.status(500).json({ error: 'Unable to find this share right now.' });
   }
-
-  const timeRemaining = session.expiresAt - Date.now();
-
-  res.json({
-    id: session.id,
-    files: session.files.map(f => ({
-      name: f.originalName,
-      size: f.size,
-      type: f.mimetype
-    })),
-    fileCount: session.fileCount,
-    totalSize: session.totalSize,
-    createdAt: session.createdAt,
-    expiresAt: session.expiresAt,
-    timeRemaining
-  });
 });
 
-// Download a single file
-app.get('/api/download/:shareId/:fileName', (req, res) => {
-  const { shareId, fileName } = req.params;
-  const session = shareStore.get(shareId.toUpperCase());
+// Download one file by redirecting directly to its Blob URL.
+app.get('/api/download/:shareId/:fileName', async (req, res) => {
+  try {
+    const found = await findManifest(req.params.shareId);
 
-  if (!session) {
-    return res.status(404).json({ error: 'Share not found or has expired.' });
+    if (!found) {
+      return res.status(404).json({ error: 'Share not found or has expired.' });
+    }
+
+    if (Date.now() > found.session.expiresAt) {
+      await deleteExpiredSession(found);
+      return res.status(410).json({ error: 'This share has expired.' });
+    }
+
+    const fileName = decodeURIComponent(req.params.fileName);
+    const file = found.session.files.find((item) => item.originalName === fileName);
+
+    if (!file) {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+
+    res.redirect(file.downloadUrl || file.url);
+  } catch (error) {
+    console.error('Download error:', error);
+    res.status(500).json({ error: 'Unable to download this file.' });
   }
-
-  if (Date.now() > session.expiresAt) {
-    return res.status(410).json({ error: 'This share has expired.' });
-  }
-
-  const file = session.files.find(f => f.originalName === fileName);
-  if (!file) {
-    return res.status(404).json({ error: 'File not found.' });
-  }
-
-  const filePath = path.join(UPLOADS_DIR, shareId.toUpperCase(), file.storedName);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'File not found on server.' });
-  }
-
-  res.download(filePath, file.originalName);
 });
 
-// Download all files as ZIP
-app.get('/api/download-all/:shareId', (req, res) => {
-  const { shareId } = req.params;
-  const session = shareStore.get(shareId.toUpperCase());
+// Stream all files into a ZIP without writing them to the Vercel filesystem.
+app.get('/api/download-all/:shareId', async (req, res) => {
+  try {
+    const found = await findManifest(req.params.shareId);
 
-  if (!session) {
-    return res.status(404).json({ error: 'Share not found or has expired.' });
-  }
+    if (!found) {
+      return res.status(404).json({ error: 'Share not found or has expired.' });
+    }
 
-  if (Date.now() > session.expiresAt) {
-    return res.status(410).json({ error: 'This share has expired.' });
-  }
+    if (Date.now() > found.session.expiresAt) {
+      await deleteExpiredSession(found);
+      return res.status(410).json({ error: 'This share has expired.' });
+    }
 
-  const archive = archiver('zip', { zlib: { level: 5 } });
-  
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="FileShare-${shareId}.zip"`);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="FileShare-${found.session.id}.zip"`
+    );
 
-  archive.pipe(res);
+    const archive = archiver('zip', { zlib: { level: 5 } });
+    archive.on('error', (error) => {
+      console.error('ZIP error:', error);
+      if (!res.headersSent) res.status(500);
+      res.end();
+    });
 
-  for (const file of session.files) {
-    const filePath = path.join(UPLOADS_DIR, shareId.toUpperCase(), file.storedName);
-    if (fs.existsSync(filePath)) {
-      archive.file(filePath, { name: file.originalName });
+    archive.pipe(res);
+
+    for (const file of found.session.files) {
+      const response = await fetch(file.url);
+
+      if (!response.ok || !response.body) {
+        console.warn(`Skipping unavailable file: ${file.originalName}`);
+        continue;
+      }
+
+      // Node 18+ supports converting a web ReadableStream to a Node stream.
+      archive.append(Readable.fromWeb(response.body), {
+        name: file.originalName,
+      });
+    }
+
+    await archive.finalize();
+  } catch (error) {
+    console.error('Download-all error:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Unable to create the ZIP file.' });
+    } else {
+      res.end();
     }
   }
-
-  archive.finalize();
 });
 
-// ─── Serve Pages ─────────────────────────────────────────────────────────────────
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(__dirname + '/public/index.html');
 });
 
 app.get('/download', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'download.html'));
+  res.sendFile(__dirname + '/public/download.html');
 });
 
-// ─── Helper ──────────────────────────────────────────────────────────────────────
 function formatBytes(bytes) {
   if (bytes === 0) return '0 Bytes';
   const k = 1024;
@@ -239,12 +275,10 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-// ─── Start Server ────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n  ╔══════════════════════════════════════════╗`);
-  console.log(`  ║       🚀 FileShare App is running!       ║`);
-  console.log(`  ║                                          ║`);
-  console.log(`  ║   Local:  http://localhost:${PORT}          ║`);
-  console.log(`  ║                                          ║`);
-  console.log(`  ╚══════════════════════════════════════════╝\n`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`FileShare App running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;

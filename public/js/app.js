@@ -214,47 +214,79 @@
       return;
     }
 
-    // Disable button & show progress
     btnUpload.disabled = true;
     btnUpload.innerHTML = '<span class="spinner"></span> Uploading...';
     progressWrapper.classList.add('active');
     progressFill.style.width = '0%';
-
-    const formData = new FormData();
-    selectedFiles.forEach(file => {
-      formData.append('files', file);
-    });
+    progressPercent.textContent = '0%';
+    progressStatus.textContent = 'Preparing...';
 
     try {
-      const xhr = new XMLHttpRequest();
+      // Vercel Blob's client SDK uploads the actual files directly from the
+      // browser, avoiding Vercel's 4.5MB server-function request limit.
+      const { upload } = await import(
+        'https://esm.sh/@vercel/blob@2.7.0/client'
+      );
 
-      // Track upload progress
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
-          const percent = Math.round((e.loaded / e.total) * 100);
-          progressFill.style.width = percent + '%';
-          progressPercent.textContent = percent + '%';
-          progressStatus.textContent = percent < 100 ? 'Uploading...' : 'Processing...';
-        }
+      const uploadedFiles = [];
+      const totalBytes = selectedFiles.reduce((sum, file) => sum + file.size, 0);
+      let completedBytes = 0;
+
+      for (let index = 0; index < selectedFiles.length; index++) {
+        const file = selectedFiles[index];
+        progressStatus.textContent =
+          `Uploading ${index + 1} of ${selectedFiles.length}: ${file.name}`;
+
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const uniqueName =
+          `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeName}`;
+
+        const blob = await upload(`files/${uniqueName}`, file, {
+          access: 'public',
+          handleUploadUrl: '/api/upload',
+          multipart: file.size > 5 * 1024 * 1024,
+          onUploadProgress: (event) => {
+            if (!event.total) return;
+
+            const currentBytes = completedBytes + event.loaded;
+            const percent = Math.min(
+              99,
+              Math.round((currentBytes / totalBytes) * 100)
+            );
+
+            progressFill.style.width = percent + '%';
+            progressPercent.textContent = percent + '%';
+          },
+        });
+
+        uploadedFiles.push({
+          originalName: file.name,
+          size: file.size,
+          mimetype: file.type || 'application/octet-stream',
+          url: blob.url,
+          downloadUrl: blob.downloadUrl || blob.url,
+          pathname: blob.pathname,
+        });
+
+        completedBytes += file.size;
+      }
+
+      progressFill.style.width = '99%';
+      progressPercent.textContent = '99%';
+      progressStatus.textContent = 'Creating share link...';
+
+      const response = await fetch('/api/create-share', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: uploadedFiles }),
       });
 
-      const result = await new Promise((resolve, reject) => {
-        xhr.open('POST', '/api/upload');
+      const result = await response.json();
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(JSON.parse(xhr.responseText));
-          } else {
-            const err = JSON.parse(xhr.responseText);
-            reject(new Error(err.error || 'Upload failed'));
-          }
-        };
+      if (!response.ok) {
+        throw new Error(result.error || 'Could not create share link.');
+      }
 
-        xhr.onerror = () => reject(new Error('Network error. Please check your connection.'));
-        xhr.send(formData);
-      });
-
-      // Success!
       progressFill.style.width = '100%';
       progressPercent.textContent = '100%';
       progressStatus.textContent = 'Complete!';
@@ -263,6 +295,7 @@
       showToast('Files shared successfully! 🎉');
 
     } catch (err) {
+      console.error(err);
       showToast(err.message || 'Upload failed. Please try again.', 'error');
       btnUpload.disabled = false;
       btnUpload.innerHTML = '🚀 Share Files';
